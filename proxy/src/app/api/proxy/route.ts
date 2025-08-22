@@ -1,27 +1,48 @@
-export default async function handler(req, res) {
-  const target = req.query.url as string;
-  if (!target) { res.status(400).send("missing url"); return; }
+import { NextRequest } from "next/server";
 
+export const runtime = "edge";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url);
+  const target = searchParams.get("url");
+  if (!target) return new Response("missing url", { status: 400 });
+
+  let u: URL;
   try {
-    const t = new URL(target);
-    if (t.hostname !== "a.windbornesystems.com") {
-      res.status(403).send("forbidden host");
-      return;
-    }
+    u = new URL(target);
   } catch {
-    res.status(400).send("bad url");
-    return;
+    return new Response("bad url", { status: 400 });
+  }
+  // tighten to Windborne only
+  if (u.hostname !== "a.windbornesystems.com") {
+    return new Response("forbidden host", { status: 403 });
   }
 
-  const r = await fetch(target, { headers: { "User-Agent": "wb-proxy/1.0" } });
-  res.setHeader("access-control-allow-origin", "*");
-  res.setHeader("access-control-allow-methods", "GET, OPTIONS");
-  res.setHeader("cache-control", "no-store");
+  const r = await fetch(u.toString(), {
+    headers: { "User-Agent": "wb-proxy/1.0" },
+    cache: "no-store",
+  });
 
-  const ct = r.headers.get("content-type") || "application/json";
-  res.setHeader("content-type", ct);
+  const h = new Headers(r.headers);
+  h.set("access-control-allow-origin", "*");
+  h.set("access-control-allow-methods", "GET, OPTIONS");
+  h.set("cache-control", "no-store");
+  if (!h.get("content-type")) h.set("content-type", "application/json");
 
-  res.status(r.status);
-  const buf = Buffer.from(await r.arrayBuffer());
-  res.send(buf);
+  return new Response(r.body, { status: r.status, headers: h });
+}
+
+// handle preflight just in case
+export function OPTIONS() {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET, OPTIONS",
+      "access-control-allow-headers": "content-type",
+      "access-control-max-age": "86400",
+    },
+  });
 }
